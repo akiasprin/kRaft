@@ -48,6 +48,9 @@ type Server struct {
 	commitChan        chan bool
 	applyChan         chan *ApplyMsg
 
+	clientRequest map[uint64]bool
+	logsSequence  map[uint64]uint64
+
 	rpc      *grpc.Server
 	port     int
 	isClosed bool
@@ -117,9 +120,11 @@ func (s *Server) AppendEntries(context context.Context, in *protodef.AppendEntri
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	ewlog.Debug(in)
+
 	out = &protodef.AppendEntriesResponse{}
 	out.Success = false
-	out.NextIndex = s.getLastIndex()
+	out.NextIndex = s.getLastIndex() + 1
 
 	// Reject a former term.
 	if in.Term < s.CurrentTerm {
@@ -161,8 +166,12 @@ func (s *Server) AppendEntries(context context.Context, in *protodef.AppendEntri
 	}
 	s.Logs = append(s.Logs[:in.PrevLogIndex+1], tmp...)
 
+	for i := 0; i <= len(tmp); i++ {
+		s.logsSequence[in.PrevLogIndex+1+uint64(i)] = 0
+	}
+
 	out.Success = true
-	out.NextIndex = s.getLastIndex()
+	// out.NextIndex = s.getLastIndex()
 
 	// Leader has confirmed new commits
 	if in.LeaderCommit > s.CommitIndex {
@@ -188,6 +197,7 @@ func (s *Server) updateCommits() {
 	}
 	didCommit := furthestCommit > s.CommitIndex
 	s.CommitIndex = furthestCommit
+	ewlog.Debugf("s.CommitIndex:%v, s.MatchIndex:%+v\n", s.CommitIndex, s.MatchIndex)
 	if didCommit {
 		s.commitChan <- true
 	}
@@ -202,7 +212,7 @@ func (s *Server) broadcast() {
 	s.updateCommits()
 	for idx, peer := range s.peers {
 		if idx != s.me {
-			prevLogIndex := getMin(s.NextIndex[idx], s.getLastIndex())
+			prevLogIndex := getMin(s.NextIndex[idx]-1, s.getLastIndex())
 			args := &protodef.AppendEntriesRequest{
 				Term:         s.CurrentTerm,
 				LeaderID:     int32(s.me),
@@ -220,7 +230,7 @@ func (s *Server) broadcast() {
 			go func(idx int, peer string) {
 				conn, err := grpc.Dial(peer, []grpc.DialOption{grpc.WithTimeout(30 * time.Millisecond), grpc.WithInsecure()}...)
 				if err != nil {
-					ewlog.Errorf("Host[%v] gRPC error: %v\n", idx, err)
+					// ewlog.Infof("Host[%v] gRPC error: %v\n", idx, err)
 					return
 				}
 				defer conn.Close()
@@ -229,7 +239,7 @@ func (s *Server) broadcast() {
 				defer cancel()
 				reply, err := c.AppendEntries(ctx, args) // Call Remote Server.AppendEntries().
 				if err != nil {
-					ewlog.Errorf("Host[%v] gRPC error: %v\n", idx, err)
+					// ewlog.Infof("Host[%v] gRPC error: %v\n", idx, err)
 					return
 				}
 
@@ -269,7 +279,7 @@ func (s *Server) holdElection() {
 			go func(idx int, peer string) {
 				conn, err := grpc.Dial(peer, []grpc.DialOption{grpc.WithTimeout(30 * time.Millisecond), grpc.WithInsecure()}...)
 				if err != nil {
-					ewlog.Errorf("Host[%v] gRPC error: %v\n", idx, err)
+					// ewlog.Infof("Host[%v] gRPC error: %v\n", idx, err)
 					return
 				}
 				defer conn.Close()
@@ -278,7 +288,7 @@ func (s *Server) holdElection() {
 				defer cancel()
 				reply, err := c.RequestVote(ctx, args) // Call Remote Server.RequestVote().
 				if err != nil {
-					ewlog.Errorf("host[%v] gRPC error: %v\n", idx, err)
+					// ewlog.Infof("host[%v] gRPC error: %v\n", idx, err)
 					return
 				}
 
@@ -322,7 +332,7 @@ func (s *Server) demoteToFollower() {
 func (s *Server) becomeLeader() {
 	s.mu.Lock()
 	s.SetState(LEADER)
-	nextIndex := uint64(len(s.Logs))
+	nextIndex := s.getLastIndex() + 1
 	for i := range s.peers {
 		s.NextIndex[i] = nextIndex
 		s.MatchIndex[i] = 0
@@ -422,6 +432,9 @@ func NewRaftServer(peers []string, me int, port int, applyChan chan *ApplyMsg) (
 	s.commitChan = make(chan bool)
 	s.applyChan = applyChan
 	s.port = port
+	s.CommitIndex = 0
+	s.clientRequest = make(map[uint64]bool)
+	s.logsSequence = make(map[uint64]uint64)
 	err = s.Start()
 	return
 }
