@@ -8,43 +8,55 @@ import (
 const (
 	MAXRETRY      = 10
 	SLEEPINTERVAL = 300 * time.Millisecond
+
+	COMMITED   = 1
+	UNCOMMITED = 2
+	EXPIRED    = 3
 )
 
-func (s *Server) Push(seq uint64, cmd []byte) (resultChan chan bool) {
+func (s *Server) isCommited(index, term uint64, resultChan chan int) {
+	success := UNCOMMITED
+	for i := 0; i < MAXRETRY; i++ {
+		s.mu.Lock()
+		if s.CommitIndex >= index {
+			if s.Logs[index].Term == term {
+				success = COMMITED
+			} else {
+				success = EXPIRED
+				s.mu.Unlock()
+				break
+			}
+		}
+		s.mu.Unlock()
+		time.Sleep(SLEEPINTERVAL)
+	}
+	resultChan <- success
+}
+
+func (s *Server) Push(index, term *uint64, cmd []byte) (resultChan chan int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	success := false
-	resultChan = make(chan bool)
-	if s.clientRequest[seq] != 0 {
-		success = s.Logs[s.clientRequest[seq]].Seq == seq
-		go func(success bool) {
-			resultChan <- success
-		}(success)
-		return
-	}
-	nextIndex := s.getLastIndex() + 1
-	s.clientRequest[seq] = nextIndex
-	s.Logs = append(s.Logs, protodef.LogEntry{
-		Seq:     seq,
-		Term:    s.CurrentTerm,
-		Index:   nextIndex,
-		Command: cmd,
-	})
-	go func(success bool) {
-		for i := 0; i < MAXRETRY; i++ {
-			s.mu.Lock()
-			if s.CommitIndex >= nextIndex {
-				if s.Logs[nextIndex].Seq == seq {
-					success = true
-				} else {
-					s.mu.Unlock()
-					break
-				}
-			}
-			s.mu.Unlock()
-			time.Sleep(SLEEPINTERVAL)
+	resultChan = make(chan int)
+
+	//如果不存在
+	if *index == 0 {
+		*index = s.getLastIndex() + 1
+		*term = s.CurrentTerm
+		s.Logs = append(s.Logs, protodef.LogEntry{
+			Term:    s.CurrentTerm,
+			Index:   *index,
+			Command: cmd,
+		})
+	} else {
+		//不是这条
+		if s.Logs[*index].Term != *term {
+			go func() { resultChan <- EXPIRED }()
+			return
+		} else {
+			go func() { resultChan <- COMMITED }()
+			return
 		}
-		resultChan <- success
-	}(success)
+	}
+	go s.isCommited(*index, *term, resultChan)
 	return
 }
