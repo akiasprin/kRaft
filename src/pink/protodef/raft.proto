@@ -1,0 +1,43 @@
+syntax = "proto3";
+package protodef;
+
+message VoteRequest {
+    uint64 Term=1;
+    int32 CandidateID=2;
+    uint64 LastLogIndex=3;
+    uint64 LastLogTerm=4;
+}
+
+message VoteResponse {
+	uint64 Term=1;
+	bool VoteGranted=2;
+}
+
+message LogEntry {
+	uint64 Index=1;
+	uint64 Term=2;;
+	bytes Command=3;
+}
+
+message AppendEntriesRequest {
+	uint64 Term=1;
+	int32 LeaderID=2;
+	uint64 LeaderCommit=3;
+	uint64 PrevLogIndex=4;
+	uint64 PrevLogTerm=5;
+	repeated LogEntry Entries=6;
+}
+
+message AppendEntriesResponse {
+	uint64 Term=1;
+	uint64 NextIndex=2;
+	uint64 CommitIndex=3;
+	bool   Success=4;
+}
+
+service Raft {
+    rpc RequestVote(VoteRequest) returns (VoteResponse){};
+    rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse){};
+}
+
+
