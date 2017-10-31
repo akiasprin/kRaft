@@ -15,29 +15,36 @@ func (s *Server) Push(seq uint64, cmd []byte) (resultChan chan bool) {
 	defer s.mu.Unlock()
 	success := false
 	resultChan = make(chan bool)
-	if s.clientRequest[seq] {
-		resultChan <- success
+	if s.clientRequest[seq] != 0 {
+		success = s.Logs[s.clientRequest[seq]].Seq == seq
+		go func(success bool) {
+			resultChan <- success
+		}(success)
 		return
 	}
-	s.clientRequest[seq] = true
 	nextIndex := s.getLastIndex() + 1
+	s.clientRequest[seq] = nextIndex
 	s.Logs = append(s.Logs, protodef.LogEntry{
+		Seq:     seq,
 		Term:    s.CurrentTerm,
 		Index:   nextIndex,
 		Command: cmd,
 	})
-	s.logsSequence[nextIndex] = seq
-	go func() {
-		for i := 0; i < MAXRETRY && !success; i++ {
+	go func(success bool) {
+		for i := 0; i < MAXRETRY; i++ {
 			s.mu.Lock()
-			if s.CommitIndex >= nextIndex &&
-				s.logsSequence[nextIndex] == seq {
-				success = true
+			if s.CommitIndex >= nextIndex {
+				if s.Logs[nextIndex].Seq == seq {
+					success = true
+				} else {
+					s.mu.Unlock()
+					break
+				}
 			}
 			s.mu.Unlock()
 			time.Sleep(SLEEPINTERVAL)
 		}
 		resultChan <- success
-	}()
+	}(success)
 	return
 }

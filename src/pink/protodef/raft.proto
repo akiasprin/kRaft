@@ -14,9 +14,10 @@ message VoteResponse {
 }
 
 message LogEntry {
-	uint64 Index=1;
+	uint64 Seq=1;
 	uint64 Term=2;;
-	bytes Command=3;
+	uint64 Index=3;
+	bytes Command=4;
 }
 
 message AppendEntriesRequest {

@@ -48,8 +48,7 @@ type Server struct {
 	commitChan        chan bool
 	applyChan         chan *ApplyMsg
 
-	clientRequest map[uint64]bool
-	logsSequence  map[uint64]uint64
+	clientRequest map[uint64]uint64
 
 	rpc      *grpc.Server
 	port     int
@@ -165,10 +164,6 @@ func (s *Server) AppendEntries(context context.Context, in *protodef.AppendEntri
 		tmp = append(tmp, *entry)
 	}
 	s.Logs = append(s.Logs[:in.PrevLogIndex+1], tmp...)
-
-	for i := 0; i <= len(tmp); i++ {
-		s.logsSequence[in.PrevLogIndex+1+uint64(i)] = 0
-	}
 
 	out.Success = true
 	// out.NextIndex = s.getLastIndex()
@@ -357,11 +352,11 @@ func (s *Server) committer() {
 				}
 				s.mu.Unlock()
 			} else {
+				ewlog.Info("stop commiter...")
 				return
 			}
 		}
 	}
-	ewlog.Info("stop commiter...")
 }
 
 func (s *Server) loop() {
@@ -433,8 +428,7 @@ func NewRaftServer(peers []string, me int, port int, applyChan chan *ApplyMsg) (
 	s.applyChan = applyChan
 	s.port = port
 	s.CommitIndex = 0
-	s.clientRequest = make(map[uint64]bool)
-	s.logsSequence = make(map[uint64]uint64)
+	s.clientRequest = make(map[uint64]uint64)
 	err = s.Start()
 	return
 }
