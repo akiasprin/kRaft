@@ -48,8 +48,6 @@ type Server struct {
 	commitChan        chan bool
 	applyChan         chan *ApplyMsg
 
-	clientRequest map[uint64]uint64
-
 	rpc      *grpc.Server
 	port     int
 	isClosed bool
@@ -128,6 +126,12 @@ func (s *Server) AppendEntries(context context.Context, in *protodef.AppendEntri
 	// Reject a former term.
 	if in.Term < s.CurrentTerm {
 		out.Term = s.CurrentTerm
+		for i := 0; i < len(in.Entries); i++ {
+			if in.Entries[i].Term != s.Logs[in.Entries[i].Index].Term {
+				return
+			}
+		}
+		out.Success = true
 		return
 	}
 
@@ -225,7 +229,7 @@ func (s *Server) broadcast() {
 			go func(idx int, peer string) {
 				conn, err := grpc.Dial(peer, []grpc.DialOption{grpc.WithTimeout(30 * time.Millisecond), grpc.WithInsecure()}...)
 				if err != nil {
-					// ewlog.Infof("Host[%v] gRPC error: %v\n", idx, err)
+					ewlog.Debugf("[%v]:gRPC error:%v\n", idx, err)
 					return
 				}
 				defer conn.Close()
@@ -234,7 +238,7 @@ func (s *Server) broadcast() {
 				defer cancel()
 				reply, err := c.AppendEntries(ctx, args) // Call Remote Server.AppendEntries().
 				if err != nil {
-					// ewlog.Infof("Host[%v] gRPC error: %v\n", idx, err)
+					ewlog.Debugf("[%v]:gRPC error:%v\n", idx, err)
 					return
 				}
 
@@ -244,7 +248,7 @@ func (s *Server) broadcast() {
 					s.VotedFor = NULLVOTE
 					s.SetState(FOLLOWER)
 				}
-				// Store the start postion of the follower's logs.
+				// Store the next start postion of the follower's logs.
 				nEntries := len(args.Entries)
 				if reply.Success && nEntries > 0 {
 					s.NextIndex[idx] = reply.NextIndex
@@ -274,7 +278,7 @@ func (s *Server) holdElection() {
 			go func(idx int, peer string) {
 				conn, err := grpc.Dial(peer, []grpc.DialOption{grpc.WithTimeout(30 * time.Millisecond), grpc.WithInsecure()}...)
 				if err != nil {
-					// ewlog.Infof("Host[%v] gRPC error: %v\n", idx, err)
+					ewlog.Debugf("[%v]:gRPC error:%v\n", idx, err)
 					return
 				}
 				defer conn.Close()
@@ -283,7 +287,7 @@ func (s *Server) holdElection() {
 				defer cancel()
 				reply, err := c.RequestVote(ctx, args) // Call Remote Server.RequestVote().
 				if err != nil {
-					// ewlog.Infof("host[%v] gRPC error: %v\n", idx, err)
+					ewlog.Debugf("[%v]:gRPC error:%v\n", idx, err)
 					return
 				}
 
@@ -334,12 +338,13 @@ func (s *Server) becomeLeader() {
 	}
 	s.mu.Unlock()
 
-	ewlog.Infof("New Leader: %+v, VoteCount:%+v\n", s.me, s.voteCount)
+	ewlog.Infof("[%v]:第%v任选主成功,共%v票.", s.me, s.CurrentTerm, s.voteCount)
 
 	s.broadcast()
 }
 
 func (s *Server) committer() {
+	ewlog.Infof("[%v]:落盘同步服务已开启.\n", s.me)
 	for {
 		select {
 		case state := <-s.commitChan:
@@ -352,7 +357,7 @@ func (s *Server) committer() {
 				}
 				s.mu.Unlock()
 			} else {
-				ewlog.Info("stop commiter...")
+				ewlog.Infof("[%v]:落盘同步服务已关闭.\n", s.me)
 				return
 			}
 		}
@@ -388,7 +393,7 @@ func (s *Server) loop() {
 			s.SetState(CLOSED)
 			s.rpc.GracefulStop()
 			s.commitChan <- false
-			ewlog.Infof("ID: %v CLOSED.\n", s.me)
+			ewlog.Infof("[%v]:系统已关闭.\n", s.me)
 			return
 		}
 	}
@@ -405,6 +410,7 @@ func (s *Server) Start() (err error) {
 	if err != nil {
 		return
 	}
+	ewlog.Infof("[%v]:系统已启动.\n", s.me)
 	s.rpc = grpc.NewServer()
 	protodef.RegisterRaftServer(s.rpc, s)
 	go s.rpc.Serve(listen)
@@ -427,8 +433,6 @@ func NewRaftServer(peers []string, me int, port int, applyChan chan *ApplyMsg) (
 	s.commitChan = make(chan bool)
 	s.applyChan = applyChan
 	s.port = port
-	s.CommitIndex = 0
-	s.clientRequest = make(map[uint64]uint64)
 	err = s.Start()
 	return
 }

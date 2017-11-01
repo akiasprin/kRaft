@@ -7,7 +7,7 @@ import (
 
 const (
 	MAXRETRY      = 10
-	SLEEPINTERVAL = 300 * time.Millisecond
+	SLEEPINTERVAL = 600 * time.Millisecond
 
 	COMMITED   = 1
 	UNCOMMITED = 2
@@ -21,7 +21,7 @@ func (s *Server) isCommited(index, term uint64, resultChan chan int) {
 		if s.CommitIndex >= index {
 			if s.Logs[index].Term == term {
 				success = COMMITED
-			} else {
+			} else { //mismatch
 				success = EXPIRED
 				s.mu.Unlock()
 				break
@@ -38,8 +38,7 @@ func (s *Server) Push(index, term *uint64, cmd []byte) (resultChan chan int) {
 	defer s.mu.Unlock()
 	resultChan = make(chan int)
 
-	//如果不存在
-	if *index == 0 {
+	if *index == 0 { // create
 		*index = s.getLastIndex() + 1
 		*term = s.CurrentTerm
 		s.Logs = append(s.Logs, protodef.LogEntry{
@@ -48,11 +47,10 @@ func (s *Server) Push(index, term *uint64, cmd []byte) (resultChan chan int) {
 			Command: cmd,
 		})
 	} else {
-		//不是这条
-		if s.Logs[*index].Term != *term {
+		if s.Logs[*index].Term != *term { // mismatch
 			go func() { resultChan <- EXPIRED }()
 			return
-		} else {
+		} else if s.CommitIndex >= *index {
 			go func() { resultChan <- COMMITED }()
 			return
 		}
