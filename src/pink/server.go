@@ -126,12 +126,6 @@ func (s *Server) AppendEntries(context context.Context, in *protodef.AppendEntri
 	// Reject a former term.
 	if in.Term < s.CurrentTerm {
 		out.Term = s.CurrentTerm
-		for i := 0; i < len(in.Entries); i++ {
-			if in.Entries[i].Term != s.Logs[in.Entries[i].Index].Term {
-				return
-			}
-		}
-		out.Success = true
 		return
 	}
 
@@ -170,7 +164,7 @@ func (s *Server) AppendEntries(context context.Context, in *protodef.AppendEntri
 	s.Logs = append(s.Logs[:in.PrevLogIndex+1], tmp...)
 
 	out.Success = true
-	// out.NextIndex = s.getLastIndex()
+	out.NextIndex = s.getLastIndex() + 1
 
 	// Leader has confirmed new commits
 	if in.LeaderCommit > s.CommitIndex {
@@ -178,6 +172,9 @@ func (s *Server) AppendEntries(context context.Context, in *protodef.AppendEntri
 		s.commitChan <- true
 	}
 
+	if len(in.Entries) > 0 {
+		ewlog.Infof("[%v<-%v]:收到:%v\n", s.me, in.LeaderID, in.Entries)
+	}
 	return
 }
 
@@ -186,7 +183,8 @@ func (s *Server) updateCommits() {
 	for i := furthestCommit + 1; i <= uint64(len(s.Logs)-1); i++ {
 		replicationCount := 1 // start count at 1 for ourselves
 		for peer := range s.peers {
-			if peer != s.me && s.MatchIndex[peer] >= i && s.Logs[i].Term == s.CurrentTerm {
+			if peer != s.me && s.MatchIndex[peer] >= i &&
+				s.Logs[i].Term == s.CurrentTerm {
 				replicationCount++
 			}
 		}
@@ -304,7 +302,7 @@ func (s *Server) holdElection() {
 					s.voteCount++
 					s.mu.Unlock()
 
-					if s.voteCount >= s.QuorumSize() {
+					if s.voteCount == s.QuorumSize() {
 						s.winElectionChan <- true
 					}
 				}
@@ -344,7 +342,7 @@ func (s *Server) becomeLeader() {
 }
 
 func (s *Server) committer() {
-	ewlog.Infof("[%v]:落盘同步服务已开启.\n", s.me)
+	ewlog.Debugf("[%v]:落盘同步服务已开启.\n", s.me)
 	for {
 		select {
 		case state := <-s.commitChan:
@@ -357,7 +355,7 @@ func (s *Server) committer() {
 				}
 				s.mu.Unlock()
 			} else {
-				ewlog.Infof("[%v]:落盘同步服务已关闭.\n", s.me)
+				ewlog.Debugf("[%v]:落盘同步服务已关闭.\n", s.me)
 				return
 			}
 		}
@@ -406,6 +404,7 @@ func (s *Server) Close() {
 func (s *Server) Start() (err error) {
 	s.SetState(FOLLOWER)
 	s.isClosed = false
+	s.VotedFor = NULLVOTE
 	listen, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
 	if err != nil {
 		return
@@ -428,9 +427,9 @@ func NewRaftServer(peers []string, me int, port int, applyChan chan *ApplyMsg) (
 	s.Logs = []protodef.LogEntry{protodef.LogEntry{Term: 0}}
 	s.NextIndex = make([]uint64, len(s.peers))
 	s.MatchIndex = make([]uint64, len(s.peers))
-	s.recvHeartbeatChan = make(chan bool, len(peers))
-	s.winElectionChan = make(chan bool, len(peers))
-	s.commitChan = make(chan bool)
+	s.recvHeartbeatChan = make(chan bool, len(s.peers))
+	s.winElectionChan = make(chan bool, len(s.peers))
+	s.commitChan = make(chan bool, 100)
 	s.applyChan = applyChan
 	s.port = port
 	err = s.Start()

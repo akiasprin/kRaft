@@ -21,7 +21,7 @@ func (s *Server) isCommited(index, term uint64, resultChan chan int) {
 		if s.CommitIndex >= index {
 			if s.Logs[index].Term == term {
 				success = COMMITED
-			} else { //mismatch
+			} else { // mismatch
 				success = EXPIRED
 				s.mu.Unlock()
 				break
@@ -47,7 +47,7 @@ func (s *Server) Push(index, term *uint64, cmd []byte) (resultChan chan int) {
 			Command: cmd,
 		})
 	} else {
-		if s.Logs[*index].Term != *term { // mismatch
+		if s.getLastIndex() < *index || s.Logs[*index].Term != *term { // mismatch
 			go func() { resultChan <- EXPIRED }()
 			return
 		} else if s.CommitIndex >= *index {

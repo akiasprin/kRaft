@@ -112,8 +112,12 @@ func TestCase(t *testing.T) {
 			if isLeader {
 				var index, term uint64
 				content := []byte("B")
-				submit(&index, &term, i, servers[i], content, 0)
 				servers[(i+1)%NUM].Close()
+				servers[(i+2)%NUM].Close()
+				time.Sleep(time.Second)
+				submit(&index, &term, i, servers[i], content, 0)
+				servers[i].Close()
+				time.Sleep(time.Second)
 			}
 		}(i)
 	}
@@ -129,7 +133,6 @@ func TestCase(t *testing.T) {
 				var index, term uint64
 				content := []byte("C")
 				submit(&index, &term, i, servers[i], content, 0)
-				servers[i].Close()
 				time.Sleep(time.Second)
 			}
 			mu.Lock()
@@ -142,7 +145,7 @@ func TestCase(t *testing.T) {
 		}(i)
 	}
 
-	time.Sleep(time.Second)
+	time.Sleep(2 * time.Second)
 
 	for i := 0; i < NUM; i++ {
 		_, isLeader, state := servers[i].GetState()
@@ -161,18 +164,18 @@ func TestCase(t *testing.T) {
 
 	time.Sleep(time.Second)
 
-	// for i := 0; i < NUM; i++ {
-	// 	_, isLeader, _ := servers[i].GetState()
-	// 	go func(i int) {
-	// 		if isLeader {
-	// 			var index, term uint64
-	// 			content := []byte("F")
-	// 			submit(&index, &term, i, servers[i], content, 0)
-	// 		}
-	// 	}(i)
-	// }
+	for i := 0; i < NUM; i++ {
+		_, isLeader, _ := servers[i].GetState()
+		go func(i int) {
+			if isLeader {
+				var index, term uint64
+				content := []byte("E")
+				submit(&index, &term, i, servers[i], content, 0)
+			}
+		}(i)
+	}
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(15 * time.Second)
 
 	for i := 0; i < NUM; i++ {
 		term, leader, state := servers[i].GetState()
