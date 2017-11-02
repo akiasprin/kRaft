@@ -180,7 +180,7 @@ func (s *Server) AppendEntries(context context.Context, in *protodef.AppendEntri
 
 func (s *Server) updateCommits() {
 	furthestCommit := s.CommitIndex
-	for i := furthestCommit + 1; i <= uint64(len(s.Logs)-1); i++ {
+	for i := furthestCommit + 1; i <= s.getLastIndex(); i++ {
 		replicationCount := 1 // start count at 1 for ourselves
 		for peer := range s.peers {
 			if peer != s.me && s.MatchIndex[peer] >= i &&
@@ -218,7 +218,7 @@ func (s *Server) broadcast() {
 				PrevLogTerm:  s.Logs[prevLogIndex].Term,
 				Entries:      make([]*protodef.LogEntry, 0),
 			}
-			for i := args.PrevLogIndex + 1; i < uint64(len(s.Logs)); i++ {
+			for i := args.PrevLogIndex + 1; i <= s.getLastIndex(); i++ {
 				args.Entries = append(args.Entries, &s.Logs[i])
 			}
 
